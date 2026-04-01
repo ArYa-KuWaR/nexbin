@@ -1,0 +1,744 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NEXBIN — Waste Intelligence Grid</title>
+    <meta name="description" content="NEXBIN — Real-time waste collection network. Track collectors live on the grid.">
+
+    <!-- Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Mono:wght@300;400;500&family=Barlow:wght@300;400;500;600&display=swap" rel="stylesheet">
+
+    <!-- Leaflet -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+    <!-- Firebase Compat -->
+    <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-database-compat.js"></script>
+
+    <style>
+        *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+        :root {
+            --bg:           #060608;
+            --surface:      #0D0D0F;
+            --surface2:     #121214;
+            --surface3:     #1A1A1D;
+            --accent:       #B8FF00;
+            --accent-dim:   rgba(184,255,0,0.12);
+            --accent-glow:  rgba(184,255,0,0.35);
+            --cyan:         #00FFB2;
+            --text:         #EAEAEA;
+            --muted:        #585864;
+            --border:       #1E1E26;
+            --danger:       #FF3A3A;
+            --success:      #00FFB2;
+            --ff-display:   'Bebas Neue', sans-serif;
+            --ff-mono:      'DM Mono', monospace;
+            --ff-body:      'Barlow', sans-serif;
+        }
+
+        html, body { height: 100%; background: var(--bg); color: var(--text); font-family: var(--ff-body); overflow: hidden; }
+
+        /* ─── MAP ─── */
+        #map { position: fixed; inset: 0; z-index: 0; }
+
+        /* Leaflet overrides */
+        .leaflet-control-zoom { border: 1px solid var(--border) !important; border-radius: 2px !important; overflow: hidden; box-shadow: none !important; }
+        .leaflet-control-zoom-in, .leaflet-control-zoom-out {
+            background: rgba(13,13,15,0.92) !important; color: var(--muted) !important;
+            border-bottom: 1px solid var(--border) !important; width: 30px !important; height: 30px !important;
+            line-height: 30px !important; font-size: 15px !important; transition: color 0.15s;
+        }
+        .leaflet-control-zoom-in:hover, .leaflet-control-zoom-out:hover { background: var(--surface3) !important; color: var(--accent) !important; }
+        .leaflet-control-attribution { background: rgba(6,6,8,0.75) !important; color: var(--muted) !important; font-size: 9px !important; font-family: var(--ff-mono) !important; }
+        .leaflet-control-attribution a { color: var(--muted) !important; }
+
+        /* Leaflet popup reset */
+        .leaflet-popup-content-wrapper { background: transparent; border: none; box-shadow: none; padding: 0; }
+        .leaflet-popup-content { margin: 0; }
+        .leaflet-popup-tip-container { display: none; }
+        .leaflet-popup-close-button { color: var(--muted) !important; top: 6px !important; right: 10px !important; font-size: 16px !important; }
+        .leaflet-popup-close-button:hover { color: var(--accent) !important; }
+
+        /* ─── GRID OVERLAY ─── */
+        #grid {
+            position: fixed; inset: 0; z-index: 1; pointer-events: none;
+            background-image:
+                linear-gradient(rgba(184,255,0,0.018) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(184,255,0,0.018) 1px, transparent 1px);
+            background-size: 64px 64px;
+        }
+
+        /* ─── HEADER ─── */
+        #header {
+            position: fixed; top: 0; left: 0; right: 0; z-index: 100;
+            display: flex; align-items: flex-start; justify-content: space-between;
+            padding: 22px 30px 60px;
+            background: linear-gradient(to bottom, rgba(6,6,8,0.97) 0%, rgba(6,6,8,0.6) 60%, transparent 100%);
+            pointer-events: none;
+        }
+
+        .logo { pointer-events: auto; }
+        .logo-wordmark {
+            font-family: var(--ff-display);
+            font-size: 40px; letter-spacing: 6px; color: var(--text);
+            line-height: 1; display: flex; align-items: center; gap: 6px;
+        }
+        .logo-wordmark .dot {
+            width: 9px; height: 9px; border-radius: 50%;
+            background: var(--accent); margin-bottom: 4px;
+            box-shadow: 0 0 14px var(--accent-glow);
+            animation: dotpulse 2.2s ease-in-out infinite;
+        }
+        @keyframes dotpulse { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:0.5;transform:scale(0.8)} }
+        .logo-sub {
+            font-family: var(--ff-mono); font-size: 8.5px; letter-spacing: 4px;
+            color: var(--muted); text-transform: uppercase; margin-top: 4px;
+        }
+
+        .header-actions { pointer-events: auto; display: flex; align-items: center; gap: 10px; }
+
+        .chip {
+            font-family: var(--ff-mono); font-size: 10px; letter-spacing: 2px;
+            color: var(--muted); padding: 7px 14px;
+            border: 1px solid var(--border); background: rgba(13,13,15,0.85);
+            backdrop-filter: blur(8px);
+        }
+        .chip span { color: var(--accent); font-weight: 500; }
+
+        .btn-join {
+            font-family: var(--ff-mono); font-size: 10px; letter-spacing: 2.5px;
+            text-transform: uppercase; padding: 10px 22px;
+            background: var(--accent); color: #060608; border: none;
+            cursor: pointer; font-weight: 500; transition: all 0.18s ease;
+            clip-path: polygon(0 0, calc(100% - 10px) 0, 100% 10px, 100% 100%, 0 100%);
+            position: relative;
+        }
+        .btn-join:hover { background: #DAFF5A; box-shadow: 0 0 24px var(--accent-glow); }
+        .btn-join:active { transform: scale(0.97); }
+
+        /* ─── STATUSBAR ─── */
+        #statusbar {
+            position: fixed; bottom: 0; left: 0; right: 0; z-index: 100;
+            display: flex; align-items: center; justify-content: space-between;
+            padding: 12px 30px 16px;
+            background: linear-gradient(to top, rgba(6,6,8,0.97) 0%, rgba(6,6,8,0.5) 70%, transparent 100%);
+        }
+
+        .sb-item {
+            display: flex; align-items: center; gap: 7px;
+            font-family: var(--ff-mono); font-size: 9.5px; letter-spacing: 1.5px;
+            color: var(--muted); text-transform: uppercase;
+        }
+
+        .sb-dot {
+            width: 6px; height: 6px; border-radius: 50%;
+            background: var(--success); box-shadow: 0 0 8px rgba(0,255,178,0.5);
+            animation: blink 1.8s ease-in-out infinite;
+        }
+        .sb-dot.off { background: var(--muted); box-shadow: none; animation: none; }
+        @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.25} }
+
+        #sb-clock { font-family: var(--ff-mono); font-size: 9.5px; letter-spacing: 2px; color: var(--muted); }
+
+        /* ─── SIDE STATS ─── */
+        #sidestats {
+            position: fixed; left: 30px; top: 50%;
+            transform: translateY(-50%);
+            z-index: 100; display: flex; flex-direction: column; gap: 6px;
+        }
+
+        .stat-card {
+            background: rgba(13,13,15,0.88);
+            border: 1px solid var(--border);
+            padding: 16px 18px;
+            backdrop-filter: blur(12px);
+            min-width: 170px;
+        }
+        .stat-card::before {
+            content: '';
+            display: block; width: 24px; height: 1px;
+            background: var(--accent); margin-bottom: 10px;
+        }
+        .stat-label { font-family: var(--ff-mono); font-size: 8px; letter-spacing: 2.5px; color: var(--muted); text-transform: uppercase; margin-bottom: 5px; }
+        .stat-val { font-family: var(--ff-display); font-size: 34px; letter-spacing: 2px; color: var(--accent); line-height: 1; }
+        .stat-sub { font-family: var(--ff-mono); font-size: 8.5px; letter-spacing: 1px; color: var(--muted); margin-top: 4px; }
+
+        /* ─── COLLECTOR LIVE PANEL ─── */
+        #live-panel {
+            position: fixed; bottom: 52px; right: 30px; z-index: 100;
+            background: rgba(10,10,12,0.96);
+            border: 1px solid var(--accent);
+            padding: 20px 22px;
+            backdrop-filter: blur(12px);
+            display: none; min-width: 210px;
+            clip-path: polygon(0 0, calc(100% - 12px) 0, 100% 12px, 100% 100%, 0 100%);
+        }
+        #live-panel.on { display: block; }
+
+        .live-row {
+            display: flex; align-items: center; gap: 8px;
+            font-family: var(--ff-mono); font-size: 9.5px; letter-spacing: 3px;
+            color: var(--danger); text-transform: uppercase; margin-bottom: 16px;
+        }
+        .live-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--danger); animation: blink 0.75s ease-in-out infinite; }
+
+        .lp-label { font-family: var(--ff-mono); font-size: 8.5px; letter-spacing: 1.5px; color: var(--muted); margin-bottom: 3px; }
+        .lp-phone { font-family: var(--ff-display); font-size: 24px; letter-spacing: 2px; color: var(--text); margin-bottom: 12px; }
+        .lp-coords { font-family: var(--ff-mono); font-size: 9px; letter-spacing: 1px; color: var(--muted); margin-bottom: 18px; }
+
+        .btn-offline {
+            width: 100%; padding: 10px;
+            background: transparent; border: 1px solid rgba(255,58,58,0.4);
+            color: var(--danger); font-family: var(--ff-mono); font-size: 9.5px;
+            letter-spacing: 2px; text-transform: uppercase; cursor: pointer;
+            transition: all 0.18s;
+        }
+        .btn-offline:hover { background: rgba(255,58,58,0.1); border-color: var(--danger); }
+
+        /* ─── TOAST ─── */
+        #toast {
+            position: fixed; top: 82px; right: 30px; z-index: 999;
+            background: var(--surface2); border: 1px solid var(--border);
+            border-left: 3px solid var(--accent); padding: 12px 16px;
+            font-family: var(--ff-mono); font-size: 10.5px; letter-spacing: 1px; color: var(--text);
+            max-width: 270px; transform: translateX(120%);
+            transition: transform 0.3s cubic-bezier(0.25, 0.46, 0.45, 0.94);
+        }
+        #toast.show { transform: translateX(0); }
+        #toast.err { border-left-color: var(--danger); }
+
+        /* ─── MODALS ─── */
+        .overlay {
+            position: fixed; inset: 0; z-index: 500;
+            background: rgba(6,6,8,0.88);
+            backdrop-filter: blur(10px);
+            display: flex; align-items: center; justify-content: center;
+            opacity: 0; pointer-events: none;
+            transition: opacity 0.28s ease;
+        }
+        .overlay.open { opacity: 1; pointer-events: auto; }
+
+        .modal {
+            background: var(--surface); border: 1px solid var(--border);
+            width: 90%; max-width: 430px; padding: 38px;
+            transform: translateY(18px);
+            transition: transform 0.28s ease;
+            position: relative;
+            clip-path: polygon(0 0, calc(100% - 18px) 0, 100% 18px, 100% 100%, 0 100%);
+        }
+        .overlay.open .modal { transform: translateY(0); }
+
+        /* angled corner accent */
+        .modal::before {
+            content: '';
+            position: absolute; top: 0; right: 0;
+            width: 0; height: 0;
+            border-top: 18px solid var(--accent);
+            border-left: 18px solid transparent;
+        }
+
+        .m-tag {
+            font-family: var(--ff-mono); font-size: 8.5px; letter-spacing: 3.5px;
+            color: var(--accent); background: var(--accent-dim);
+            padding: 4px 10px; display: inline-block; margin-bottom: 22px;
+            text-transform: uppercase;
+        }
+
+        .m-icon { margin-bottom: 22px; }
+        .m-title { font-family: var(--ff-display); font-size: 44px; letter-spacing: 3px; line-height: 1; margin-bottom: 12px; }
+        .m-desc { font-family: var(--ff-body); font-size: 13.5px; color: var(--muted); line-height: 1.65; margin-bottom: 28px; }
+
+        .m-divider { width: 40px; height: 1px; background: var(--border); margin-bottom: 24px; }
+
+        .input-wrap { margin-bottom: 20px; }
+        .input-lbl { display: block; font-family: var(--ff-mono); font-size: 8.5px; letter-spacing: 3px; color: var(--muted); text-transform: uppercase; margin-bottom: 8px; }
+        .input-field {
+            width: 100%; padding: 12px 14px;
+            background: var(--surface2); border: 1px solid var(--border);
+            color: var(--text); font-family: var(--ff-mono); font-size: 15px;
+            letter-spacing: 2px; outline: none; transition: border-color 0.18s;
+        }
+        .input-field:focus { border-color: var(--accent); }
+        .input-field::placeholder { color: var(--muted); font-size: 13px; letter-spacing: 1px; }
+
+        .btn-p {
+            width: 100%; padding: 14px;
+            background: var(--accent); color: #060608; border: none;
+            font-family: var(--ff-mono); font-size: 11px; letter-spacing: 2.5px;
+            text-transform: uppercase; cursor: pointer; font-weight: 500;
+            transition: all 0.18s;
+            clip-path: polygon(0 0, calc(100% - 10px) 0, 100% 10px, 100% 100%, 0 100%);
+        }
+        .btn-p:hover { background: #DAFF5A; box-shadow: 0 0 20px var(--accent-glow); }
+        .btn-p:active { transform: scale(0.98); }
+
+        .btn-s {
+            width: 100%; padding: 12px; background: transparent;
+            border: 1px solid var(--border); color: var(--muted);
+            font-family: var(--ff-mono); font-size: 10.5px; letter-spacing: 2px;
+            text-transform: uppercase; cursor: pointer; margin-top: 10px; transition: all 0.18s;
+        }
+        .btn-s:hover { color: var(--text); border-color: var(--muted); }
+
+        /* ─── LOADING ─── */
+        #loading {
+            position: fixed; inset: 0; z-index: 900;
+            background: var(--bg);
+            display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 22px;
+            transition: opacity 0.6s ease;
+        }
+
+        .ld-logo { font-family: var(--ff-display); font-size: 72px; letter-spacing: 12px; }
+        .ld-logo em { font-style: normal; color: var(--accent); }
+
+        .ld-bar { width: 210px; height: 1.5px; background: var(--surface3); overflow: hidden; }
+        .ld-fill {
+            height: 100%; width: 0%;
+            background: linear-gradient(90deg, var(--accent), var(--cyan));
+            box-shadow: 0 0 10px var(--accent-glow);
+            animation: ldanim 1.6s cubic-bezier(0.4,0,0.2,1) forwards;
+        }
+        @keyframes ldanim { to { width: 100%; } }
+
+        .ld-txt { font-family: var(--ff-mono); font-size: 9.5px; letter-spacing: 4px; color: var(--muted); text-transform: uppercase; }
+
+        /* ─── RESPONSIVE ─── */
+        @media (max-width: 640px) {
+            #sidestats { display: none; }
+            #header { padding: 16px 18px 50px; }
+            .logo-wordmark { font-size: 30px; }
+            #statusbar { padding: 10px 18px 14px; }
+            .sb-item:nth-child(2) { display: none; }
+            #live-panel { right: 18px; }
+            #toast { right: 18px; }
+        }
+    </style>
+</head>
+<body>
+
+<!-- LOADING -->
+<div id="loading">
+    <div class="ld-logo">NEX<em>BIN</em></div>
+    <div class="ld-bar"><div class="ld-fill"></div></div>
+    <div class="ld-txt" id="ld-msg">Initialising waste grid</div>
+</div>
+
+<!-- GRID OVERLAY -->
+<div id="grid"></div>
+
+<!-- MAP -->
+<div id="map"></div>
+
+<!-- HEADER -->
+<div id="header">
+    <div class="logo">
+        <div class="logo-wordmark">NEXBIN<div class="dot"></div></div>
+        <div class="logo-sub">Waste Intelligence Grid</div>
+    </div>
+    <div class="header-actions">
+        <div class="chip">ACTIVE&nbsp;<span id="active-ct">0</span></div>
+        <button class="btn-join" onclick="openModal('reg-modal')">Join as Collector</button>
+    </div>
+</div>
+
+<!-- SIDE STATS -->
+<div id="sidestats">
+    <div class="stat-card">
+        <div class="stat-label">Active Collectors</div>
+        <div class="stat-val" id="ss-count">0</div>
+        <div class="stat-sub">Live on grid</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-label">Network</div>
+        <div class="stat-val" id="ss-net" style="font-size:20px; color:var(--success)">ONLINE</div>
+        <div class="stat-sub" id="ss-upd">Listening...</div>
+    </div>
+</div>
+
+<!-- STATUS BAR -->
+<div id="statusbar">
+    <div class="sb-item"><div class="sb-dot" id="sb-dot"></div><span id="sb-status">GRID ACTIVE</span></div>
+    <div class="sb-item" id="sb-loc">— AWAITING LOCATION —</div>
+    <div id="sb-clock">--:--:--</div>
+</div>
+
+<!-- COLLECTOR LIVE PANEL -->
+<div id="live-panel">
+    <div class="live-row"><div class="live-dot"></div>TRANSMITTING</div>
+    <div class="lp-label">Registered as</div>
+    <div class="lp-phone" id="lp-phone">—</div>
+    <div class="lp-coords" id="lp-coords">Acquiring signal...</div>
+    <button class="btn-offline" onclick="goOffline()">Go Offline</button>
+</div>
+
+<!-- TOAST -->
+<div id="toast"></div>
+
+<!-- ───────────────────────────────────────────────────────────────────
+     MODAL: DISPOSER LOCATION PERMISSION
+─────────────────────────────────────────────────────────────────── -->
+<div class="overlay open" id="loc-modal">
+    <div class="modal">
+        <div class="m-tag">Location Access</div>
+        <div class="m-icon">
+            <svg width="58" height="58" viewBox="0 0 58 58" fill="none">
+                <circle cx="29" cy="29" r="27" stroke="#1E1E26" stroke-width="1.5"/>
+                <circle cx="29" cy="29" r="18" stroke="#B8FF00" stroke-width="0.8" stroke-dasharray="3 3" opacity="0.45"/>
+                <circle cx="29" cy="29" r="4.5" fill="#B8FF00"/>
+                <line x1="29" y1="2" x2="29" y2="13" stroke="#B8FF00" stroke-width="1.5" stroke-linecap="round" opacity="0.6"/>
+                <line x1="29" y1="45" x2="29" y2="56" stroke="#B8FF00" stroke-width="1.5" stroke-linecap="round" opacity="0.6"/>
+                <line x1="2" y1="29" x2="13" y2="29" stroke="#B8FF00" stroke-width="1.5" stroke-linecap="round" opacity="0.6"/>
+                <line x1="45" y1="29" x2="56" y2="29" stroke="#B8FF00" stroke-width="1.5" stroke-linecap="round" opacity="0.6"/>
+            </svg>
+        </div>
+        <div class="m-title">SHARE LOCATION</div>
+        <div class="m-desc">NEXBIN uses your GPS position to show nearby waste collectors and calculate distances. Your location is used locally and never stored.</div>
+        <div class="m-divider"></div>
+        <button class="btn-p" onclick="requestDisposerLocation()">Allow Location Access</button>
+        <button class="btn-s" onclick="closeModal('loc-modal')">Continue Without Location</button>
+    </div>
+</div>
+
+<!-- ───────────────────────────────────────────────────────────────────
+     MODAL: COLLECTOR REGISTRATION
+─────────────────────────────────────────────────────────────────── -->
+<div class="overlay" id="reg-modal">
+    <div class="modal">
+        <!-- Step 1 -->
+        <div id="rs1">
+            <div class="m-tag">Collector Registration</div>
+            <div class="m-icon">
+                <svg width="58" height="58" viewBox="0 0 58 58" fill="none">
+                    <rect x="6" y="20" width="33" height="22" rx="2" stroke="#B8FF00" stroke-width="1.4"/>
+                    <path d="M39 27h11l6 7v8H39V27z" stroke="#B8FF00" stroke-width="1.4"/>
+                    <circle cx="15" cy="45" r="4.5" fill="#060608" stroke="#B8FF00" stroke-width="1.3"/>
+                    <circle cx="46" cy="45" r="4.5" fill="#060608" stroke="#B8FF00" stroke-width="1.3"/>
+                    <line x1="6" y1="33" x2="39" y2="33" stroke="#B8FF00" stroke-width="0.8" opacity="0.4"/>
+                    <path d="M14 20V16a4 4 0 0 1 4-4h8a4 4 0 0 1 4 4v4" stroke="#B8FF00" stroke-width="1" opacity="0.35"/>
+                </svg>
+            </div>
+            <div class="m-title">JOIN THE GRID</div>
+            <div class="m-desc">Register your vehicle on the NEXBIN network. Residents will see your live GPS position on the waste grid map.</div>
+            <div class="m-divider"></div>
+            <div class="input-wrap">
+                <label class="input-lbl" for="phone-in">Phone Number</label>
+                <input type="tel" id="phone-in" class="input-field" placeholder="+91 98765 43210" maxlength="16" autocomplete="tel">
+            </div>
+            <button class="btn-p" onclick="regStep2()">Continue</button>
+            <button class="btn-s" onclick="closeModal('reg-modal')">Cancel</button>
+        </div>
+
+        <!-- Step 2 -->
+        <div id="rs2" style="display:none">
+            <div class="m-tag">Enable GPS Tracking</div>
+            <div class="m-icon">
+                <svg width="58" height="58" viewBox="0 0 58 58" fill="none">
+                    <circle cx="29" cy="29" r="12" stroke="#B8FF00" stroke-width="1.4"/>
+                    <circle cx="29" cy="29" r="5" fill="#B8FF00"/>
+                    <path d="M29 4v9M29 45v9M4 29h9M45 29h9" stroke="#B8FF00" stroke-width="1.5" stroke-linecap="round" opacity="0.65"/>
+                    <path d="M12.4 12.4l6.36 6.36M39.24 39.24l6.36 6.36M45.6 12.4l-6.36 6.36M18.76 39.24l-6.36 6.36" stroke="#B8FF00" stroke-width="1" stroke-linecap="round" opacity="0.35"/>
+                    <circle cx="29" cy="29" r="22" stroke="#B8FF00" stroke-width="0.6" stroke-dasharray="2 4" opacity="0.3"/>
+                </svg>
+            </div>
+            <div class="m-title">ENABLE TRACKING</div>
+            <div class="m-desc">To appear on the waste grid, NEXBIN requires access to your real-time GPS location. Residents looking for collectors will see your live movement.</div>
+            <div class="m-divider"></div>
+            <button class="btn-p" onclick="requestCollectorGPS()">Enable GPS Tracking</button>
+            <button class="btn-s" onclick="closeModal('reg-modal')">Not Now</button>
+        </div>
+    </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════════
+     SCRIPTS
+═══════════════════════════════════════════════════════════════════ -->
+<script>
+// ═══════════════════════════════════════════════════════════════
+// FIREBASE CONFIG  ←  Replace with your own project credentials
+// ═══════════════════════════════════════════════════════════════
+const FIREBASE_CONFIG = {
+  apiKey: "AIzaSyDEqTfXy09WgeZKnl3DNVRVNbCH761ztjQ",
+  authDomain: "nexbin-prod.firebaseapp.com",
+  databaseURL: "https://nexbin-prod-default-rtdb.asia-southeast1.firebasedatabase.app",
+  projectId: "nexbin-prod",
+  storageBucket: "nexbin-prod.firebasestorage.app",
+  messagingSenderId: "384529224934",
+  appId: "1:384529224934:web:648b753093ce4fb7d45727",
+  measurementId: "G-GEKJ1SHMRJ"
+};
+
+// ═══════════════════════════════════════════════
+// STATE
+// ═══════════════════════════════════════════════
+let map, db;
+let truckMarkers   = {};   // phone_key → Leaflet marker
+let myMarker       = null;
+let watchId        = null;
+let myPhone        = null;
+let fbConnected    = false;
+
+// ═══════════════════════════════════════════════
+// BOOTSTRAP
+// ═══════════════════════════════════════════════
+window.addEventListener('load', () => {
+    const msgs = ['Calibrating sensors', 'Connecting to grid', 'Loading map tiles', 'System ready'];
+    let mi = 0;
+    const ldMsg = document.getElementById('ld-msg');
+    const msgInterval = setInterval(() => {
+        mi = (mi + 1) % msgs.length;
+        ldMsg.textContent = msgs[mi];
+    }, 400);
+
+    setTimeout(() => {
+        clearInterval(msgInterval);
+        const ld = document.getElementById('loading');
+        ld.style.opacity = '0';
+        setTimeout(() => ld.style.display = 'none', 600);
+    }, 1800);
+
+    initMap();
+    initFirebase();
+    startClock();
+});
+
+// ═══════════════════════════════════════════════
+// MAP
+// ═══════════════════════════════════════════════
+function initMap() {
+    map = L.map('map', {
+        center: [20.5937, 78.9629],
+        zoom: 5,
+        zoomControl: true,
+        attributionControl: true
+    });
+
+    // Dark CartoDB tiles
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a> &copy; <a href="https://carto.com/">CARTO</a>',
+        subdomains: 'abcd',
+        maxZoom: 20
+    }).addTo(map);
+
+    map.zoomControl.setPosition('bottomright');
+}
+
+// ═══════════════════════════════════════════════
+// FIREBASE
+// ═══════════════════════════════════════════════
+function initFirebase() {
+    try {
+        firebase.initializeApp(FIREBASE_CONFIG);
+        db = firebase.database();
+
+        // Connection sentinel
+        db.ref('.info/connected').on('value', snap => {
+            fbConnected = snap.val() === true;
+            setNetStatus(fbConnected);
+        });
+
+        // Real-time collectors listener
+        db.ref('collectors').on('value', snap => {
+            const data = snap.val() || {};
+            reconcileMarkers(data);
+            const n = Object.keys(data).length;
+            setCount(n);
+            document.getElementById('ss-upd').textContent = 'Updated ' + now();
+        });
+
+    } catch (e) {
+        console.warn('Firebase error:', e.message);
+        toast('Firebase not configured — add your credentials.', true);
+        setNetStatus(false);
+    }
+}
+
+function reconcileMarkers(data) {
+    // Remove departed collectors
+    Object.keys(truckMarkers).forEach(key => {
+        if (!data[key]) { map.removeLayer(truckMarkers[key]); delete truckMarkers[key]; }
+    });
+
+    // Add / update
+    Object.entries(data).forEach(([key, info]) => {
+        if (!info.lat || !info.lng) return;
+        const ll = [info.lat, info.lng];
+        if (truckMarkers[key]) {
+            truckMarkers[key].setLatLng(ll);
+            truckMarkers[key].getPopup()?.setContent(popupHTML(info.phone || key));
+        } else {
+            const m = L.marker(ll, { icon: truckIcon() }).addTo(map);
+            m.bindPopup(popupHTML(info.phone || key), { className: 'nx-popup' });
+            truckMarkers[key] = m;
+        }
+    });
+}
+
+// ═══════════════════════════════════════════════
+// ICONS
+// ═══════════════════════════════════════════════
+function truckIcon() {
+    const svg = `<svg width="52" height="52" viewBox="0 0 52 52" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <circle cx="26" cy="26" r="24" fill="#0A0A0C" fill-opacity="0.92" stroke="#B8FF00" stroke-width="1.4"/>
+  <rect x="8" y="19" width="22" height="16" rx="1.5" fill="#B8FF00" fill-opacity="0.1" stroke="#B8FF00" stroke-width="1.2"/>
+  <path d="M30 24h9l3.5 5.5V35H30V24z" fill="#B8FF00" fill-opacity="0.1" stroke="#B8FF00" stroke-width="1.2"/>
+  <circle cx="15" cy="37" r="3.2" fill="#0A0A0C" stroke="#B8FF00" stroke-width="1"/>
+  <circle cx="37" cy="37" r="3.2" fill="#0A0A0C" stroke="#B8FF00" stroke-width="1"/>
+  <line x1="8" y1="27" x2="30" y2="27" stroke="#B8FF00" stroke-width="0.7" stroke-opacity="0.45"/>
+  <circle cx="26" cy="26" r="23" stroke="#B8FF00" stroke-width="0.4" stroke-opacity="0.2" stroke-dasharray="2 4"/>
+</svg>`;
+    return L.divIcon({ html: svg, className: '', iconSize: [52, 52], iconAnchor: [26, 26], popupAnchor: [0, -30] });
+}
+
+function myIcon() {
+    const svg = `<svg width="22" height="22" viewBox="0 0 22 22" fill="none">
+  <circle cx="11" cy="11" r="9" fill="#060608" fill-opacity="0.85" stroke="#00FFB2" stroke-width="1.5"/>
+  <circle cx="11" cy="11" r="3.5" fill="#00FFB2"/>
+  <circle cx="11" cy="11" r="7" stroke="#00FFB2" stroke-width="0.5" stroke-dasharray="2 3" opacity="0.5"/>
+</svg>`;
+    return L.divIcon({ html: svg, className: '', iconSize: [22, 22], iconAnchor: [11, 11] });
+}
+
+function popupHTML(phone) {
+    return `<div style="font-family:'DM Mono',monospace;background:#0D0D0F;color:#EAEAEA;padding:12px 16px;border:1px solid #1E1E26;min-width:150px;">
+        <div style="font-size:8px;letter-spacing:3px;color:#B8FF00;margin-bottom:8px;text-transform:uppercase;">Collector Unit</div>
+        <div style="font-size:15px;letter-spacing:1px;margin-bottom:4px;">${maskPhone(phone)}</div>
+        <div style="font-size:8.5px;color:#585864;letter-spacing:1px;">Live &bull; ${now()}</div>
+    </div>`;
+}
+
+function maskPhone(p) {
+    if (!p || p.length <= 4) return p || '—';
+    return p.slice(0, -4).replace(/\d/g, '•') + p.slice(-4);
+}
+
+// ═══════════════════════════════════════════════
+// DISPOSER LOCATION
+// ═══════════════════════════════════════════════
+function requestDisposerLocation() {
+    closeModal('loc-modal');
+    if (!navigator.geolocation) { toast('Geolocation not supported.', true); return; }
+
+    navigator.geolocation.getCurrentPosition(
+        pos => {
+            const { latitude: lat, longitude: lng } = pos.coords;
+            if (myMarker) map.removeLayer(myMarker);
+            myMarker = L.marker([lat, lng], { icon: myIcon() }).addTo(map);
+            myMarker.bindPopup(`<div style="font-family:'DM Mono',monospace;background:#0D0D0F;color:#EAEAEA;padding:10px 14px;border:1px solid #1E1E26;font-size:10px;letter-spacing:1px;">YOUR LOCATION</div>`);
+            map.setView([lat, lng], 14, { animate: true, duration: 1.2 });
+            document.getElementById('sb-loc').textContent = `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
+            toast('Location acquired. Grid is now active.');
+        },
+        () => toast('Location permission denied.', true),
+        { enableHighAccuracy: true }
+    );
+}
+
+// ═══════════════════════════════════════════════
+// COLLECTOR REGISTRATION
+// ═══════════════════════════════════════════════
+function regStep2() {
+    const raw = document.getElementById('phone-in').value.trim();
+    if (!raw || raw.replace(/\D/g,'').length < 7) { toast('Enter a valid phone number.', true); return; }
+    myPhone = raw.replace(/\s+/g, '').replace(/[^0-9+]/g, '');
+    document.getElementById('rs1').style.display = 'none';
+    document.getElementById('rs2').style.display = 'block';
+}
+
+function requestCollectorGPS() {
+    if (!navigator.geolocation) { toast('Geolocation not supported.', true); return; }
+    closeModal('reg-modal');
+
+    if (watchId !== null) navigator.geolocation.clearWatch(watchId);
+    let firstFix = true;
+
+    watchId = navigator.geolocation.watchPosition(
+        pos => {
+            const { latitude: lat, longitude: lng } = pos.coords;
+            pushLocation(lat, lng);
+
+            document.getElementById('lp-coords').textContent =
+                `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
+            document.getElementById('lp-phone').textContent = myPhone;
+            document.getElementById('live-panel').classList.add('on');
+
+            if (firstFix) {
+                map.setView([lat, lng], 15, { animate: true, duration: 1.2 });
+                toast('You are now live on the NEXBIN grid.');
+                firstFix = false;
+            }
+        },
+        () => toast('GPS access denied. Cannot broadcast location.', true),
+        { enableHighAccuracy: true, maximumAge: 4000, timeout: 12000 }
+    );
+}
+
+function pushLocation(lat, lng) {
+    if (!db || !myPhone) return;
+    const key = myPhone.replace(/[^a-zA-Z0-9]/g, '_');
+    db.ref('collectors/' + key).set({
+        lat, lng,
+        phone: myPhone,
+        ts: firebase.database.ServerValue.TIMESTAMP
+    }).catch(e => console.warn('Write failed:', e));
+}
+
+function goOffline() {
+    if (watchId !== null) { navigator.geolocation.clearWatch(watchId); watchId = null; }
+    if (db && myPhone) {
+        const key = myPhone.replace(/[^a-zA-Z0-9]/g, '_');
+        db.ref('collectors/' + key).remove().catch(() => {});
+    }
+    document.getElementById('live-panel').classList.remove('on');
+    toast('You are now offline.');
+    myPhone = null;
+    // Reset form
+    document.getElementById('phone-in').value = '';
+    document.getElementById('rs1').style.display = 'block';
+    document.getElementById('rs2').style.display = 'none';
+}
+
+// ═══════════════════════════════════════════════
+// UI HELPERS
+// ═══════════════════════════════════════════════
+function openModal(id)  { document.getElementById(id).classList.add('open'); }
+function closeModal(id) { document.getElementById(id).classList.remove('open'); }
+
+let toastTimer;
+function toast(msg, isErr = false) {
+    const el = document.getElementById('toast');
+    el.textContent = msg;
+    el.className = isErr ? 'err show' : 'show';
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => el.className = isErr ? 'err' : '', 3800);
+}
+
+function setCount(n) {
+    document.getElementById('active-ct').textContent = n;
+    document.getElementById('ss-count').textContent  = n;
+}
+
+function setNetStatus(online) {
+    const el  = document.getElementById('ss-net');
+    const dot = document.getElementById('sb-dot');
+    const st  = document.getElementById('sb-status');
+    el.textContent  = online ? 'ONLINE' : 'OFFLINE';
+    el.style.color  = online ? 'var(--success)' : 'var(--danger)';
+    dot.classList.toggle('off', !online);
+    st.textContent  = online ? 'GRID ACTIVE' : 'RECONNECTING';
+}
+
+function startClock() {
+    const el = document.getElementById('sb-clock');
+    const tick = () => { el.textContent = new Date().toLocaleTimeString('en-GB', { hour12: false }); };
+    tick(); setInterval(tick, 1000);
+}
+
+function now() { return new Date().toLocaleTimeString('en-GB', { hour12: false }); }
+</script>
+</body>
+</html>
